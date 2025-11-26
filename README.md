@@ -64,6 +64,71 @@ Update the following in your config:
 
 Open `http://your-ip:8080` in your browser.
 
+## Docker Deployment
+
+### Quick Start with Docker
+
+```bash
+# Clone the repository
+git clone https://github.com/mmuteeullah/CoreNVR.git
+cd CoreNVR
+
+# Create config from example
+cp configs/config.example.yaml config.yaml
+# Edit config.yaml with your camera settings
+
+# Create directories
+mkdir -p recordings logs
+
+# Build and run
+docker-compose up -d
+```
+
+### Docker Commands
+
+```bash
+# Build image
+docker build -t corenvr:latest .
+
+# Run container
+docker run -d \
+  --name corenvr \
+  -p 8080:8080 \
+  -v $(pwd)/config.yaml:/etc/corenvr/config.yaml:ro \
+  -v $(pwd)/recordings:/recordings \
+  -v $(pwd)/logs:/var/log/corenvr \
+  --restart unless-stopped \
+  corenvr:latest
+
+# View logs
+docker logs -f corenvr
+
+# Stop container
+docker-compose down
+```
+
+### Docker Compose
+
+The included `docker-compose.yml` provides:
+- Volume mounts for config, recordings, and logs
+- Health checks
+- Automatic restart
+- Timezone configuration
+
+For cameras on the host network, uncomment `network_mode: host` in docker-compose.yml.
+
+### Multi-Architecture Build
+
+Build for Raspberry Pi (arm64):
+
+```bash
+# Build for arm64
+docker buildx build --platform linux/arm64 -t corenvr:arm64 .
+
+# Or use docker-compose on Pi directly
+docker-compose up -d --build
+```
+
 ## Installation as Service
 
 ```bash

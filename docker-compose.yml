@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  corenvr:
+    build: .
+    image: corenvr:latest
+    container_name: corenvr
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      # Configuration file (create from config.example.yaml)
+      - ./config.yaml:/etc/corenvr/config.yaml:ro
+      # Recordings storage
+      - ./recordings:/recordings
+      # Logs (optional)
+      - ./logs:/var/log/corenvr
+    environment:
+      - TZ=UTC  # Set your timezone
+    # For camera network access (if cameras are on host network)
+    # network_mode: host
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+# Optional: Use host network for direct camera access
+# Uncomment below and comment out the 'ports' section above
+#
+# services:
+#   corenvr:
+#     network_mode: host
