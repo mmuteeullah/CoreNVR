@@ -196,6 +196,23 @@ make hashpass     # Generate password hash
 make help         # Show all targets
 ```
 
+## Health Check Endpoint
+
+CoreNVR exposes a health check endpoint for monitoring:
+
+```bash
+# Simple health check
+curl http://localhost:8080/health
+# Returns: OK
+
+# Use in monitoring tools, load balancers, or Docker health checks
+```
+
+The `/health` endpoint:
+- Returns `200 OK` when the service is running
+- Does not require authentication
+- Used by Docker health checks automatically
+
 ## Project Structure
 
 ```
@@ -210,6 +227,7 @@ CoreNVR/
 │   ├── storage/      # Storage management
 │   └── webui/        # Web interface
 ├── configs/          # Example configurations
+├── deploy/           # Deployment configs (systemd, logrotate)
 ├── tools/            # Utility tools
 ├── Makefile
 └── README.md
@@ -230,6 +248,34 @@ pip3 install tinytuya
 ```
 
 Enable in config with `recovery.enabled: true`.
+
+## Deployment Files
+
+The `deploy/` folder contains ready-to-use configuration files:
+
+### Systemd Service
+```bash
+# Install service
+sudo cp deploy/corenvr.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable corenvr
+sudo systemctl start corenvr
+```
+
+### Log Rotation
+```bash
+# Install logrotate config
+sudo cp deploy/corenvr.logrotate /etc/logrotate.d/corenvr
+
+# Test logrotate
+sudo logrotate -d /etc/logrotate.d/corenvr
+```
+
+Features:
+- Daily rotation
+- 7 days retention
+- Compression
+- Max 100MB per log file
 
 ## Logs
 

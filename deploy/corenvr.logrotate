@@ -1,0 +1,19 @@
+# Logrotate configuration for CoreNVR
+# Install: sudo cp deploy/corenvr.logrotate /etc/logrotate.d/corenvr
+
+/var/log/corenvr/*.log {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    notifempty
+    missingok
+    create 0640 root root
+    maxsize 100M
+    dateext
+    dateformat -%Y%m%d
+    sharedscripts
+    postrotate
+        systemctl reload corenvr 2>/dev/null || true
+    endscript
+}

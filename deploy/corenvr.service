@@ -1,0 +1,30 @@
+# CoreNVR Systemd Service
+# Install: sudo cp deploy/corenvr.service /etc/systemd/system/
+
+[Unit]
+Description=CoreNVR - Lightweight Network Video Recorder
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/opt/corenvr/corenvr -config /etc/corenvr/config.yaml
+ExecReload=/bin/kill -USR1 $MAINPID
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/log/corenvr /mnt/nvr /recordings
+
+# Resource limits
+MemoryMax=512M
+CPUQuota=80%
+
+[Install]
+WantedBy=multi-user.target
