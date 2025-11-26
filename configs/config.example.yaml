@@ -1,0 +1,75 @@
+# CoreNVR Configuration Example
+# Copy this file to /etc/corenvr/config.yaml and update the values
+
+# Storage configuration
+storage:
+  base_path: /mnt/nvr/recordings    # Where to store recordings
+  segment_duration: 1800            # Segment duration in seconds (30 minutes)
+  retention_days: 7                 # Auto-delete recordings older than this
+
+# Camera configuration
+cameras:
+  - name: "camera_1"
+    url: "rtsp://username:password@192.168.1.100:554/stream1"
+    enabled: true
+    retry_delay: 5                  # Seconds to wait before reconnecting
+    max_retries: -1                 # -1 = infinite retries
+
+  # Add more cameras as needed:
+  # - name: "camera_2"
+  #   url: "rtsp://username:password@192.168.1.101:554/stream1"
+  #   enabled: true
+  #   retry_delay: 5
+  #   max_retries: -1
+
+# Web UI configuration
+webui:
+  enabled: true
+  port: 8080
+
+  # Authentication (recommended for production)
+  authentication:
+    enabled: true
+    username: "admin"
+    # Generate password hash with: go run tools/hashpass.go YourPassword
+    password_hash: "$2a$10$REPLACE_WITH_YOUR_HASH_FROM_HASHPASS_TOOL"
+    session_timeout: 60             # Minutes until session expires
+    # Generate a random secret key (min 32 chars)
+    secret_key: "REPLACE_WITH_RANDOM_STRING_AT_LEAST_32_CHARACTERS"
+
+# System configuration
+system:
+  log_level: "info"                 # debug, info, warn, error
+  log_file: "/var/log/corenvr/corenvr.log"
+  health_check_interval: 60         # Seconds between health checks
+
+# Notification configuration (optional)
+notifications:
+  enabled: false
+  # webhook_url: "https://your-webhook-url"
+
+# Recovery configuration (optional - for automatic camera recovery)
+# Requires a Tuya-compatible smart plug
+recovery:
+  enabled: false                    # Set to true to enable recovery
+
+  # Detection settings
+  stale_threshold: 600              # Seconds - recording considered stale (10 min)
+  verification_delay: 120           # Seconds - wait to confirm failure (2 min)
+  health_check_interval: 60         # Seconds - how often to check camera health
+
+  # Recovery limits
+  max_power_cycles_per_30min: 2     # Prevent rapid power cycling
+  service_restart_timeout: 30       # Seconds - wait after service restart
+  power_cycle_recovery_timeout: 60  # Seconds - wait after power cycle
+
+  # Tuya Smart Plug configuration (get credentials from Tuya IoT Platform)
+  smartplug:
+    device_id: "your_tuya_device_id"
+    ip: "192.168.1.xxx"
+    local_key: "your_tuya_local_key"
+    version: "3.3"
+    power_off_duration: 10          # Seconds to keep camera off
+
+  # Slack notifications for recovery events (optional)
+  slack_webhook: ""                 # Your Slack webhook URL

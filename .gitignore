@@ -1,0 +1,23 @@
+# Binaries (root level only)
+/corenvr
+/corenvr-*
+*.exe
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test data
+nvr-data/
+*.ts
+*.m3u8
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Config with secrets
+config.yaml
+!configs/config.example.yaml
