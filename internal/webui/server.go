@@ -1,18 +1,42 @@
 package webui
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/mmuteeullah/CoreNVR/internal/auth"
 	"github.com/mmuteeullah/CoreNVR/internal/config"
+)
+
+// KeyframeInfo stores byte offset and timestamp for a keyframe
+type KeyframeInfo struct {
+	ByteOffset int64
+	Timestamp  float64
+}
+
+// FileKeyframes stores keyframe data for a recording file
+type FileKeyframes struct {
+	Keyframes []KeyframeInfo
+	FileSize  int64
+	Duration  float64
+	CachedAt  time.Time
+}
+
+// Global cache for keyframe data
+var (
+	keyframeCache     = make(map[string]*FileKeyframes)
+	keyframeCacheLock sync.RWMutex
 )
 
 // Server represents the web UI server
@@ -607,12 +631,163 @@ func (s *Server) handleRecordingPlayback(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Set appropriate content type
+	// Set appropriate content type and CORS headers for Safari
 	w.Header().Set("Content-Type", "video/mp2t")
 	w.Header().Set("Accept-Ranges", "bytes")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Range, Content-Type")
+	w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Range")
+
+	// Handle OPTIONS preflight
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 
 	// Serve the file
 	http.ServeFile(w, r, filePath)
+}
+
+// getKeyframes probes a video file to extract keyframe positions using FFprobe
+func (s *Server) getKeyframes(filePath string) (*FileKeyframes, error) {
+	// Check cache first
+	keyframeCacheLock.RLock()
+	if cached, ok := keyframeCache[filePath]; ok {
+		if time.Since(cached.CachedAt) < time.Hour {
+			keyframeCacheLock.RUnlock()
+			return cached, nil
+		}
+	}
+	keyframeCacheLock.RUnlock()
+
+	s.logger.Printf("Probing keyframes for: %s", filePath)
+
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("stat file: %w", err)
+	}
+
+	// Use FFprobe to find keyframes
+	cmd := exec.Command("ffprobe",
+		"-v", "quiet",
+		"-select_streams", "v:0",
+		"-show_packets",
+		"-show_entries", "packet=pts_time,pos,flags",
+		"-of", "csv=p=0",
+		filePath,
+	)
+
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("ffprobe failed: %w", err)
+	}
+
+	var keyframes []KeyframeInfo
+	var lastTimestamp float64
+
+	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	for scanner.Scan() {
+		line := scanner.Text()
+		parts := strings.Split(line, ",")
+		if len(parts) < 3 || !strings.Contains(parts[2], "K") {
+			continue
+		}
+
+		timestamp, err := strconv.ParseFloat(parts[0], 64)
+		if err != nil {
+			continue
+		}
+
+		pos, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil {
+			continue
+		}
+
+		keyframes = append(keyframes, KeyframeInfo{
+			ByteOffset: pos,
+			Timestamp:  timestamp,
+		})
+		lastTimestamp = timestamp
+	}
+
+	if len(keyframes) == 0 {
+		return nil, fmt.Errorf("no keyframes found")
+	}
+
+	result := &FileKeyframes{
+		Keyframes: keyframes,
+		FileSize:  fileInfo.Size(),
+		Duration:  lastTimestamp,
+		CachedAt:  time.Now(),
+	}
+
+	keyframeCacheLock.Lock()
+	keyframeCache[filePath] = result
+	keyframeCacheLock.Unlock()
+
+	s.logger.Printf("Found %d keyframes, duration: %.1fs", len(keyframes), lastTimestamp)
+	return result, nil
+}
+
+// generateByteRangePlaylist creates an HLS playlist with byte-range segments
+func (s *Server) generateByteRangePlaylist(camera, date, filename string, kf *FileKeyframes) string {
+	recordingURL := fmt.Sprintf("/recordings/%s/%s/%s", camera, date, filename)
+	targetDuration := 10.0
+
+	var segments []string
+	var maxSegmentDuration float64
+
+	segmentStart := 0
+	for i := 1; i <= len(kf.Keyframes); i++ {
+		var endTime, startTime float64
+
+		if i == len(kf.Keyframes) {
+			endTime = kf.Duration
+		} else {
+			endTime = kf.Keyframes[i].Timestamp
+		}
+
+		startTime = kf.Keyframes[segmentStart].Timestamp
+		segmentDuration := endTime - startTime
+
+		createSegment := i == len(kf.Keyframes) || segmentDuration >= targetDuration
+
+		if createSegment && segmentDuration > 0 {
+			startByte := kf.Keyframes[segmentStart].ByteOffset
+			var endByte int64
+			if i == len(kf.Keyframes) {
+				endByte = kf.FileSize
+			} else {
+				endByte = kf.Keyframes[i].ByteOffset
+			}
+
+			byteLength := endByte - startByte
+			if byteLength > 0 {
+				segments = append(segments,
+					fmt.Sprintf("#EXTINF:%.3f,\n#EXT-X-BYTERANGE:%d@%d\n%s",
+						segmentDuration, byteLength, startByte, recordingURL))
+				if segmentDuration > maxSegmentDuration {
+					maxSegmentDuration = segmentDuration
+				}
+			}
+			segmentStart = i
+		}
+	}
+
+	targetDurationInt := int(maxSegmentDuration) + 1
+	if targetDurationInt < 10 {
+		targetDurationInt = 10
+	}
+
+	return fmt.Sprintf(`#EXTM3U
+#EXT-X-VERSION:4
+#EXT-X-TARGETDURATION:%d
+#EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-PLAYLIST-TYPE:VOD
+%s
+#EXT-X-ENDLIST
+`, targetDurationInt, strings.Join(segments, "\n"))
 }
 
 // handleRecordingPlaylist generates an HLS playlist for a single recording file
@@ -668,20 +843,36 @@ func (s *Server) handleRecordingPlaylist(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Generate HLS playlist for this single file
+	// Generate byte-range HLS playlist for mobile-friendly playback
+	var playlist string
 	recordingURL := fmt.Sprintf("/recordings/%s/%s/%s", camera, date, filename)
 
-	playlist := fmt.Sprintf(`#EXTM3U
+	keyframes, err := s.getKeyframes(filePath)
+	if err != nil {
+		s.logger.Printf("Keyframe probe failed, using simple playlist: %v", err)
+		// Fallback to simple playlist if probing fails
+		playlist = fmt.Sprintf(`#EXTM3U
 #EXT-X-VERSION:3
 #EXT-X-TARGETDURATION:1800
 #EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-PLAYLIST-TYPE:VOD
 #EXTINF:1800.0,
 %s
 #EXT-X-ENDLIST
 `, recordingURL)
+	} else {
+		// Use byte-range playlist with ~10 second segments
+		playlist = s.generateByteRangePlaylist(camera, date, filename, keyframes)
+		s.logger.Printf("Generated byte-range playlist with %d segments", len(keyframes.Keyframes))
+	}
 
+	// Headers for Safari/mobile compatibility
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Range, Content-Type")
+	w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Range")
 	w.Write([]byte(playlist))
 }
 

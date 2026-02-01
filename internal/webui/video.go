@@ -65,6 +65,9 @@ func (s *Server) servePlaylist(w http.ResponseWriter, r *http.Request, cameraNam
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
+	// CORS headers for Safari mobile
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 	w.Write([]byte(playlistStr))
 }
 
@@ -143,6 +146,11 @@ func (s *Server) serveFile(w http.ResponseWriter, r *http.Request, filePath stri
 	// Set content type for video segments
 	w.Header().Set("Content-Type", "video/MP2T")
 	w.Header().Set("Accept-Ranges", "bytes")
+	// CORS headers for Safari mobile
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Range")
+	w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Range")
 
 	// Handle range requests for efficient streaming
 	rangeHeader := r.Header.Get("Range")
